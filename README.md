@@ -95,6 +95,7 @@ make test   # build and run the tests
 ## References
 
 - [Nightcrawler](https://transcorp.romhacking.net)
+- [ImHex Tables](https://github.com/WerWolv/ImHex-Patterns/tree/master/encodings/builtin)
 - [TCRF Data Crystal TBL files](https://datacrystal.tcrf.net/wiki/Category:TBL_Files)
 - [retrotool](https://github.com/danielburgess/SFCRetroTools)
 - [Zophar's Domain](https://www.zophar.net/documents/transdocs/table-files.html)
