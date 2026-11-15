@@ -2,6 +2,8 @@
 
 #include "txtcnv.hpp"
 
+#include <cctype>
+#include <cstddef>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -47,8 +49,32 @@ static bool write_output(const std::string& path, const char* data, size_t size)
     return static_cast<bool>(file.write(data, size));
 }
 
-// the verbose summary of a conversion
-static void print_stats(const TXTCNV::Stats& stats, bool encoding, size_t in_size, size_t out_size)
+// reads a byte count or offset, in decimal or hex (with a 0x prefix)
+static bool parse_size(const std::string& text, size_t& out)
+{
+    // require a digit first, so stoull doesn't accept "-5"
+    if (text.empty() || !std::isdigit(static_cast<unsigned char>(text[0])))
+    {
+        return false;
+    } 
+
+    int base = (text.rfind("0x", 0) == 0 || text.rfind("0X", 0) == 0) ? 16 : 10;
+
+    try
+    {
+        size_t used = 0;
+        out = std::stoull(text, &used, base);
+        return used == text.size(); // reject trailing junk like "12abc"
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+// verbose summary of a conversion
+static void print_stats(const TXTCNV::Stats& stats, bool encoding, 
+                        size_t in_size, size_t out_size, size_t input_offset)
 {
     if (encoding)
     {
@@ -72,7 +98,7 @@ static void print_stats(const TXTCNV::Stats& stats, bool encoding, size_t in_siz
     for (size_t i = 0; i < stats.unmatched.size() && i < max_shown; i++)
     {
         std::cerr << "  at offset 0x" << std::hex 
-                  << std::uppercase << stats.unmatched[i]
+                  << std::uppercase << input_offset + stats.unmatched[i]
                   << std::dec << "\n";
     }
 
@@ -94,8 +120,11 @@ int main(int argc, char* argv[])
     #endif
 
     TXTCNV::TextCodec codec;
+    
     std::vector<std::string> args;
     bool verbose = false;
+    size_t decode_skip = 0;
+    size_t decode_len = std::string::npos; // npos = decode to the end of the input
 
     for (int i = 1; i < argc; i++)
     {
@@ -105,9 +134,20 @@ int main(int argc, char* argv[])
         {
             verbose = true;
         }
-        else if (arg == "-s") 
+        else if (arg == "-m") 
         { 
             codec.mark_table_switches = true; 
+        }
+        else if (arg == "-s" || arg == "-l")
+        {
+            size_t& value = (arg == "-s") ? decode_skip : decode_len;
+
+            if (i + 1 >= argc || !parse_size(argv[++i], value))
+            {
+                std::cerr << "ERROR: " << arg << 
+                             " needs a number of bytes (e.g. 256 or 0xFF)\n";
+                return 1;
+            }
         }
         else 
         { 
@@ -126,9 +166,12 @@ int main(int argc, char* argv[])
         "  txtcnv [options] decode <table.tbl> <input file> [output file]\n\n"
 
         "options:\n"
-        "  -v   verbose output (printed to stderr)\n"
-        "  -s   when decoding, mark table switches in the text as [TableID]\n"
-        "       (table switches are worked out when encoding, so they aren't needed)\n\n"
+        "  -v           verbose output (printed to stderr)\n"
+        "  -s seek      start decoding at <seek> bytes offset\n"
+        "  -l len       stop decoding after <len> bytes\n"
+        "               (numbers can be decimal or hex, e.g. 4096 or 0x1000)\n"
+        "  -m           mark decoded table switches in text as [TableID]\n"
+        "               (table switches are worked out when encoding, so they aren't needed)\n\n"
 
         "Output goes to stdout unless an output file is given, so it can be\n"
         "piped or redirected. Use - as the input to read from stdin.\n\n"
@@ -167,8 +210,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // the converted output (text or binary)
-    std::string output;
+    std::string output; // the converted output (text or binary)
 
     if (encoding)
     {
@@ -180,8 +222,18 @@ int main(int argc, char* argv[])
         }
         output.assign(data.begin(), data.end());
     }
-    else
+    else // decode
     {
+        if (decode_skip > input.size())
+        {
+            std::cerr << "ERROR: -s " << decode_skip << " is past the end of the input ("
+                      << input.size() << " bytes)\n";
+            return 1;
+        }
+
+        // keep only the chunk picked with -s and -l
+        input = input.substr(decode_skip, decode_len);
+
         if (!codec.Decode(output, TXTCNV::Bytes(input.begin(), input.end())))
         {
             std::cerr << "ERROR: " << codec.Error() << "\n";
@@ -196,7 +248,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (verbose) print_stats(codec.LastStats(), encoding, input.size(), output.size());
+    if (verbose) 
+    {
+        print_stats(codec.LastStats(), encoding, input.size(), output.size(), decode_skip);
+    }
 
     return 0;
 }

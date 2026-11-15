@@ -55,9 +55,12 @@ First, build the command line tool (see below). Then run:
 txtcnv [options] encode <table.tbl> <input text> [output file]
 txtcnv [options] decode <table.tbl> <input file> [output file]
 
-  -v   verbose output (printed to stderr)
-  -s   when decoding, mark table switches in the text as [TableID]
-       (table switches are worked out when encoding, so they aren't needed)
+  -v           verbose output (printed to stderr)
+  -s seek      start decoding at <seek> bytes offset
+  -l len       stop decoding after <len> bytes
+               (numbers can be decimal or hex, e.g. 4096 or 0x1000)
+  -m           mark decoded table switches in text as [TableID]
+               (table switches are worked out when encoding, so they aren't needed)
 
 The output goes to stdout unless an output file is given, so it can be
 piped or redirected. Use - as the input to read from stdin.
