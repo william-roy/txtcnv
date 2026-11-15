@@ -22,7 +22,7 @@ what made sense to me. Some caveats apply:
 - **Labels** must be unique within a table, duplicate *text* in normal entries 
   is allowed (shortest hex wins).
 - **A -1 switch in the starting table** switches indefinitely, because there's
-  no table to fall back to.
+  no table to fall back to, making it functionally the same as a 0 switch.
 
 The encoder never writes bytes that would decode to different text, so
 encode → decode always gives back the original text (sans line breaks).
@@ -52,8 +52,8 @@ if (!codec.Encode(data, text)) std::cerr << codec.Error() << "\n";
 First, build the command line tool (see below). Then run:
 
 ```
-txtcnv [options] encode <table.tbl> <input text>
-txtcnv [options] decode <table.tbl> <input file>
+txtcnv [options] encode <table.tbl> <input text> [output file]
+txtcnv [options] decode <table.tbl> <input file> [output file]
 
   -v   verbose output (printed to stderr)
   -s   when decoding, mark table switches in the text as [TableID]
@@ -67,9 +67,16 @@ Follows the Table File Format 1.0 with Level 2 compliance.
 For example:
 
 ```
+# Decode the contents of script.bin into script.txt 
 txtcnv decode game.tbl script.bin > script.txt
+
+# Pipe the encoded contents of script.txt to xxd
 txtcnv encode game.tbl script.txt | xxd
+
+# Encode the piped-in contents of script.txt into script.bin
 cat script.txt | txtcnv encode game.tbl - script.bin
+
+# Encode the piped in string and pipe it to stdout
 echo "Good morning, Crono!" | txtcnv encode game.tbl - | xxd
 ```
 
@@ -87,3 +94,4 @@ make test   # build and run the tests
 - [Nightcrawler](https://transcorp.romhacking.net)
 - [TCRF Data Crystal TBL files](https://datacrystal.tcrf.net/wiki/Category:TBL_Files)
 - [retrotool](https://github.com/danielburgess/SFCRetroTools)
+- [Zophar's Domain](https://www.zophar.net/documents/transdocs/table-files.html)
