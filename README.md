@@ -132,3 +132,4 @@ make test   # build and run the tests
 - [TCRF Data Crystal TBL files](https://datacrystal.tcrf.net/wiki/Category:TBL_Files)
 - [retrotool](https://github.com/danielburgess/SFCRetroTools)
 - [Zophar's Domain](https://www.zophar.net/documents/transdocs/table-files.html)
+- [utf8.h](https://github.com/sheredom/utf8.h)
