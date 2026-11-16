@@ -68,7 +68,7 @@ The output goes to stdout unless an output file is given, so it can be piped or 
 
 For example:
 
-```
+```sh
 # Decode the contents of script.bin into script.txt 
 txtcnv decode game.tbl script.bin > script.txt
 
@@ -81,8 +81,8 @@ cat script.txt | txtcnv encode game.tbl - script.bin
 # Encode the piped in string and pipe it to stdout
 echo "Good morning, Crono!" | txtcnv encode game.tbl - | xxd
 
-# Encode instances of ENC("str") with encoded string literal
-txtcnv source game.tbl main.c
+# Replace instances of ENC("str") in source with encoded string literals
+txtcnv source game.tbl main.c ../build/main.c
 ```
 
 ## Source Files
@@ -118,7 +118,7 @@ Note:
 
 ## Building
 
-```
+```console
 make        # build ./bin/txtcnv
 make test   # build and run the tests
 ```
