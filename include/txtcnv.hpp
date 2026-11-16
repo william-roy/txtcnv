@@ -15,6 +15,8 @@
 //
 //     codec.Decode(text, data);    // hex-to-text (dumping)
 //     codec.Encode(data, text);    // text-to-hex (inserting)
+//
+//     codec.EncodeSource(out, src); // ENC("...") in source code -> "\x.."
 
 #pragma once
 
@@ -98,13 +100,14 @@ private:
 public:
     explicit Table(std::string id) : id_(std::move(id)) {}
 
-    // allow moving so by_text_, by_label_ and switches_ don't break
+    // enable move operations
     Table(Table&&) = default;
     Table& operator=(Table&&) = default;
 
-    // prevent copy constructor
+    // delete copy operations
     Table(const Table&) = delete;
     Table& operator=(const Table&) = delete;
+
 
     // Returns table id
     const std::string& id() const { return id_; }
@@ -145,8 +148,9 @@ struct Stats {
     size_t switch_bytes = 0;  // number of bytes those switches take up
     size_t fallbacks = 0;     // number of times active table had no match
                               // and a table further down the stack did
-    std::vector<size_t> unmatched;  // offsets of the bytes no table matched 
+    std::vector<size_t> unmatched;  // offsets of the bytes no table matched
                                     // (written as raw hex, "[$XX]")
+    size_t literals = 0;      // ENC("...") strings replaced by EncodeSource
 };
 
 class TextCodec {
@@ -168,6 +172,10 @@ public:
 
     // Text-to-hex
     bool Encode(Bytes& data, const std::string& text);
+
+    // Encodes string literals wrapped in ENC("...") in C/C++ source code
+    // e.g. ENC("Hi") -> "\x11\x2C" /* Hi */
+    bool EncodeSource(std::string& out, const std::string& source);
 
     // Returns the last error
     const std::string& Error() const { return error_; }

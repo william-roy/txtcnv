@@ -54,17 +54,16 @@ First, build the command line tool (see below). Then run:
 ```
 txtcnv [options] encode <table.tbl> <input text> [output file]
 txtcnv [options] decode <table.tbl> <input file> [output file]
+txtcnv [options] source <table.tbl> <source file> [output file]
 
   -v           verbose output (printed to stderr)
   -s seek      start decoding at <seek> bytes offset
   -l len       stop decoding after <len> bytes
                (numbers can be decimal or hex, e.g. 4096 or 0x1000)
   -m           mark decoded table switches in text as [TableID]
-               (table switches are worked out when encoding, so they aren't needed)
+               (table switches are worked out automatically when encoding)
 
-The output goes to stdout unless an output file is given, so it can be
-piped or redirected. Use - as the input to read from stdin.
-Follows the Table File Format 1.0 with Level 2 compliance.
+The output goes to stdout unless an output file is given, so it can be piped or redirected. Use - as the input to read from stdin.
 ```
 
 For example:
@@ -81,7 +80,41 @@ cat script.txt | txtcnv encode game.tbl - script.bin
 
 # Encode the piped in string and pipe it to stdout
 echo "Good morning, Crono!" | txtcnv encode game.tbl - | xxd
+
+# Encode instances of ENC("str") with encoded string literal
+txtcnv source game.tbl main.c
 ```
+
+## Source Files
+
+The `source` command encodes all string literals wrapped in `ENC(...)` within C/C++ code and adds a comment with the original text. For example:
+
+```c
+// empty macro so file will still compile on its own
+#define ENC(s) s
+
+// before (src/text.c)
+const char greeting[] = ENC("Good morning, Crono!");
+print(ENC("[COLOR red=255 green=0 blue=0]Hello"));
+
+// after (build/text.c)
+const char greeting[] = "\x10\x32\x32\x27..." /* Good morning, Crono! */;
+print("\xFC\xFF\x00\x00\x11\x28\x2F\x2F\x32" /* [COLOR red=255 green=0 blue=0]Hello */);
+```
+Run it as a build step, for example in a makefile:
+
+```make
+build/%.c: src/%.c game.tbl
+	txtcnv source game.tbl $< $@
+```
+
+Note: 
+
+- The output is still a plain string literal, so `sizeof` will give the encoded length + 1, because the compiler will still add the trailing NUL byte `\0`.
+- Strings next to each other are joined, e.g. `ENC("Good " "morning")`.
+- The only escapes allowed are `\\ \" \' \n \t`. Write raw bytes as `[$XX]`.
+- `ENC` in comments, inside other strings, or not followed by a string
+  (e.g. `#define ENC(s) s`) is left alone.
 
 ## Building
 

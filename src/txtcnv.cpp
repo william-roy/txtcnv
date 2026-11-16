@@ -1218,6 +1218,226 @@ bool TextCodec::Encode(Bytes& data, const std::string& text)
     return true;
 }
 
+// Source files ----------------------------------------------------------------
+//
+// Finds all instances of ENC("...") in C/C++ source code and replaces each one 
+// with a string literal of the encoded bytes + original text as a comment:
+//
+//     print(ENC("Hello"));  ->  print("\x11\x28\x2F\x2F\x32" /* Hello */);
+//
+// Comments and other string/char literals are copied as they are, so an ENC
+// inside them is left alone. So is an ENC( that isn't followed by a string,
+// like "#define ENC(s) s"
+
+static constexpr std::string_view SOURCE_MACRO = "ENC";
+
+// for checking ENC is a whole identifier (and not part of e.g. MY_ENC)
+static bool is_identifier_char(char c)
+{
+    return is_alnum(c) || c == '_';
+}
+
+// returns the position of the first character after i that isn't a space
+static size_t skip_spaces(std::string_view src, size_t i)
+{
+    while (i < src.size() && is_space(src[i])) i++;
+    return i;
+}
+
+// if an ENC("...") starts at i, returns the position of its first '"'
+// (or npos if there isn't one there)
+static size_t find_macro_string(std::string_view src, size_t i)
+{
+    size_t after_name = i + SOURCE_MACRO.size();
+
+    bool whole_name = src.substr(i, SOURCE_MACRO.size()) == SOURCE_MACRO &&
+        (i == 0 || !is_identifier_char(src[i - 1])) &&
+        (after_name == src.size() || !is_identifier_char(src[after_name]));
+
+    if (!whole_name) return std::string_view::npos;
+
+    size_t open = skip_spaces(src, after_name);
+    if (open >= src.size() || src[open] != '(') return std::string_view::npos;
+
+    size_t string = skip_spaces(src, open + 1);
+    if (string >= src.size() || src[string] != '"') return std::string_view::npos;
+
+    return string;
+}
+
+// returns the position after comment or literal at position i
+static size_t skip_comment_or_literal(std::string_view src, size_t i)
+{
+    if (src.substr(i, 2) == "//")
+    {
+        size_t end = src.find('\n', i);
+        return (end == std::string_view::npos) ? src.size() : end;
+    }
+
+    if (src.substr(i, 2) == "/*")
+    {
+        size_t end = src.find("*/", i + 2);
+        return (end == std::string_view::npos) ? src.size() : end + 2;
+    }
+
+    if (src[i] == '"' || src[i] == '\'')
+    {
+        char quote = src[i];
+        for (size_t j = i + 1; j < src.size(); j++)
+        {
+            if (src[j] == '\\') j++; // skip the escaped character
+            else if (src[j] == quote) return j + 1;
+            else if (src[j] == '\n') return j; // unterminated
+        }
+        return src.size();
+    }
+
+    return i;
+}
+
+// reads a "..." literal into text and moves i past it
+static bool read_source_literal(std::string_view src, size_t& i,
+                                std::string& text, std::string& error)
+{
+    for (i++; i < src.size() && src[i] != '\n'; i++)
+    {
+        char c = src[i];
+
+        if (c == '"')
+        {
+            i++;
+            return true;
+        }
+
+        if (c != '\\')
+        {
+            text += c;
+            continue;
+        }
+
+        char escaped = (i + 1 < src.size()) ? src[++i] : ' ';
+        switch (escaped)
+        {
+            case '\\': case '"': case '\'': text += escaped; break;
+            case 'n': text += '\n'; break;
+            case 't': text += '\t'; break;
+            default:
+                error = std::string("unsupported escape '\\") + escaped +
+                        "' (write raw bytes as [$XX])";
+                return false;
+        }
+    }
+
+    error = "missing '\"' at the end of the string";
+    return false;
+}
+
+// returns bytes as a string literal, e.g. "\x11\x28"
+static std::string c_hex_literal(const Bytes& bytes)
+{
+    std::string str = "\"";
+    for (uint8_t byte : bytes)
+    {
+        str += std::format("\\x{:02X}", byte);
+    }
+    return str + "\"";
+}
+
+// returns text as a C comment, e.g. /* Hello */
+static std::string c_comment(const std::string& text)
+{
+    std::string str = "/* ";
+    for (size_t i = 0; i < text.size(); i++)
+    {
+        if (text[i] == '\n')
+        {
+            str += "\\n";
+            continue;
+        }
+
+        str += text[i];
+
+        // stop "*/" in the text from ending the comment
+        if (text[i] == '*' && i + 1 < text.size() && text[i + 1] == '/')
+        {
+            str += '\\';
+        }
+    }
+    return str + " */";
+}
+
+bool TextCodec::EncodeSource(std::string& out, const std::string& source)
+{
+    if (tables_.empty()) return fail("no table loaded");
+    out.clear();
+
+    std::string_view src = source;
+    Stats total;
+
+    auto line_error = [&](size_t pos, const std::string& message)
+    {
+        size_t line = 1 + std::count(src.begin(), src.begin() + pos, '\n');
+        return fail("line " + std::to_string(line) + ": " + message);
+    };
+
+    size_t i = 0;
+    while (i < src.size())
+    {
+        // copy comments and other literals as they are
+        size_t skipped = skip_comment_or_literal(src, i);
+        if (skipped != i)
+        {
+            out += src.substr(i, skipped - i);
+            i = skipped;
+            continue;
+        }
+
+        size_t end = find_macro_string(src, i);
+        if (end == std::string_view::npos)
+        {
+            out += src[i];
+            i++;
+            continue;
+        }
+
+        // read the string, joining any strings next to each other
+        std::string text;
+        std::string error;
+
+        while (end < src.size() && src[end] == '"')
+        {
+            if (!read_source_literal(src, end, text, error))
+            {
+                return line_error(end, error);
+            }
+            end = skip_spaces(src, end);
+        }
+
+        if (end >= src.size() || src[end] != ')')
+        {
+            return line_error(end, "expected ')' after the string in " +
+                              std::string(SOURCE_MACRO) + "(...)");
+        }
+        end++;
+
+        Bytes data;
+        if (!Encode(data, text)) return line_error(i, Error());
+
+        total.switches += stats_.switches;
+        total.switch_bytes += stats_.switch_bytes;
+        total.literals++;
+
+        out += c_hex_literal(data) + " " + c_comment(text);
+
+        // keep the line numbers the same as in the source
+        out.append(std::count(src.begin() + i, src.begin() + end, '\n'), '\n');
+        i = end;
+    }
+
+    stats_ = total;
+    return true;
+}
+
 // Decoding --------------------------------------------------------------------
 //
 // Decoding is much simpler than encoding and is all done in this function, 

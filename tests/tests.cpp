@@ -1,6 +1,9 @@
 // tests/tests.cpp
 
+#include <algorithm>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include "txtcnv.hpp"
@@ -24,6 +27,17 @@ static int n_failed = 0;
 // test_02.tbl: letters, numbers, control codes, an end token, and collisions
 static const char* SWITCH_TBL = "tests/test_01.tbl";
 static const char* MAIN_TBL   = "tests/test_02.tbl";
+
+// test_src.c: C source with ENC("...") strings to encode with test_02.tbl
+static const char* SOURCE_FILE = "tests/test_src.c";
+
+static std::string read_file(const char* path)
+{
+    std::ifstream file(path, std::ios::binary);
+    std::stringstream content;
+    content << file.rdbuf();
+    return content.str();
+}
 
 static std::string decode(TextCodec& codec, const Bytes& data)
 {
@@ -112,12 +126,38 @@ int main()
     {
         codec.LoadTableFile(SWITCH_TBL);
 
-        Bytes data = {0x00, 0xF8, 0x00, 0x01, 0xF9, 0x01, 0x03};
+        Bytes data = {
+            0x00, 0xF8, 0x00, 0x01, 
+            0xF9, 0x01, 0x03
+        };
         std::string text;
         Bytes back;
         CHECK(codec.Decode(text, data));
         CHECK(codec.Encode(back, text));
         CHECK(back == data);
+    }
+
+    // Source files ------------------------------------------------------------
+    {
+        codec.LoadTableFile(MAIN_TBL);
+
+        std::string source = read_file(SOURCE_FILE);
+        std::string out;
+        CHECK(codec.EncodeSource(out, source));
+
+        // only the three ENC("...") strings outside comments and other strings
+        CHECK(codec.LastStats().literals == 3);
+
+        CHECK(out.find("greeting[] = \"\\x11\\x28\\x2F\\x2F\\x32\" "
+                       "/* Hello */;")
+                       != std::string::npos);
+        CHECK(out.find("color[] = \"\\xFC\\xFF\\x00\\x80\" "
+                       "/* [COLOR red=255 green=0 blue=128] */;")
+                       != std::string::npos);
+
+        // line numbers stay the same
+        CHECK(std::count(out.begin(), out.end(), '\n') ==
+              std::count(source.begin(), source.end(), '\n'));
     }
 
     std::cout << (n_tests - n_failed) << "/" << n_tests << " checks passed\n";

@@ -73,13 +73,23 @@ static bool parse_size(const std::string& text, size_t& out)
 }
 
 // verbose summary of a conversion
-static void print_stats(const TXTCNV::Stats& stats, bool encoding, 
+static void print_stats(const TXTCNV::Stats& stats, const std::string& command,
                         size_t in_size, size_t out_size, size_t input_offset)
 {
-    if (encoding)
+    if (command == "encode" || command == "source")
     {
-        std::cerr << in_size << " bytes of text -> " 
-                  << out_size << " bytes of data\n";
+        if (command == "encode")
+        {
+            std::cerr << in_size << " bytes of text -> "
+                      << out_size << " bytes of data\n";
+        }
+        else
+        {
+            std::cerr << stats.literals << " ENC() strings encoded ("
+                      << in_size << " bytes of source -> "
+                      << out_size << " bytes)\n";
+        }
+
         std::cerr << "Table switches written: " << stats.switches
                   << " (" << stats.switch_bytes << " bytes)\n";
         return;
@@ -155,15 +165,21 @@ int main(int argc, char* argv[])
         }
     }
 
-    bool encoding = !args.empty() && args[0] == "encode";
-    bool decoding = !args.empty() && args[0] == "decode";
+    const std::string command = args.empty() ? "" : args[0];
 
-    if ((!encoding && !decoding) || args.size() < 3 || args.size() > 4)
+    bool known_command = command == "encode" || command == "decode" ||
+                         command == "source";
+
+    if (!known_command || args.size() < 3 || args.size() > 4)
     {
         std::cerr <<
         "usage:\n"
         "  txtcnv [options] encode <table.tbl> <input text> [output file]\n"
-        "  txtcnv [options] decode <table.tbl> <input file> [output file]\n\n"
+        "  txtcnv [options] decode <table.tbl> <input file> [output file]\n"
+        "  txtcnv [options] source <table.tbl> <source file> [output file]\n\n"
+
+        "source replaces each ENC(\"...\") in C/C++ source code with a string\n"
+        "literal of the encoded bytes, e.g. \"\\x11\\x2C\" /* Hi */\n\n"
 
         "options:\n"
         "  -v           verbose output (printed to stderr)\n"
@@ -212,7 +228,7 @@ int main(int argc, char* argv[])
 
     std::string output; // the converted output (text or binary)
 
-    if (encoding)
+    if (command == "encode")
     {
         TXTCNV::Bytes data;
         if (!codec.Encode(data, input))
@@ -221,6 +237,14 @@ int main(int argc, char* argv[])
             return 1;
         }
         output.assign(data.begin(), data.end());
+    }
+    else if (command == "source")
+    {
+        if (!codec.EncodeSource(output, input))
+        {
+            std::cerr << "ERROR: " << input_path << ": " << codec.Error() << "\n";
+            return 1;
+        }
     }
     else // decode
     {
@@ -250,7 +274,7 @@ int main(int argc, char* argv[])
 
     if (verbose) 
     {
-        print_stats(codec.LastStats(), encoding, input.size(), output.size(), decode_skip);
+        print_stats(codec.LastStats(), command, input.size(), output.size(), decode_skip);
     }
 
     return 0;
