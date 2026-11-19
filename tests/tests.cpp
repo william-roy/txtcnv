@@ -1,10 +1,11 @@
 // tests/tests.cpp
 
-#include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <algorithm>
 
 #include "txtcnv.hpp"
 
@@ -31,12 +32,31 @@ static const char* MAIN_TBL   = "tests/test_02.tbl";
 // test_src.c: C source with ENC("...") strings to encode with test_02.tbl
 static const char* SOURCE_FILE = "tests/test_src.c";
 
+// source encoding is part of the command line tool, so it's tested by running
+// it (the makefile builds it before the tests). Its output goes in obj/
+#ifdef _WIN32
+static const std::string TXTCNV_EXE = "bin\\txtcnv.exe";
+#else
+static const std::string TXTCNV_EXE = "./bin/txtcnv";
+#endif
+static const char* SOURCE_OUT = "obj/test_src_out.c";
+static const char* SOURCE_LOG = "obj/test_src_log.txt";
+static const char* EMPTY_SRC  = "obj/test_src_empty.c";
+
 static std::string read_file(const char* path)
 {
     std::ifstream file(path, std::ios::binary);
     std::stringstream content;
     content << file.rdbuf();
     return content.str();
+}
+
+// runs "txtcnv -v source <table> <source> SOURCE_OUT", returns true on success
+static bool run_source_command(const char* table, const char* source)
+{
+    std::string cmd = TXTCNV_EXE + " -v source " + table + " " + source + " " +
+                      SOURCE_OUT + " 2> " + SOURCE_LOG;
+    return std::system(cmd.c_str()) == 0;
 }
 
 static std::string decode(TextCodec& codec, const Bytes& data)
@@ -139,14 +159,14 @@ int main()
 
     // Source files ------------------------------------------------------------
     {
-        codec.LoadTableFile(MAIN_TBL);
+        CHECK(run_source_command(MAIN_TBL, SOURCE_FILE));
 
         std::string source = read_file(SOURCE_FILE);
-        std::string out;
-        CHECK(codec.EncodeSource(out, source));
+        std::string out = read_file(SOURCE_OUT);
 
-        // only the three ENC("...") strings outside comments and other strings
-        CHECK(codec.LastStats().literals == 3);
+        // only the three ENC("...") and two ENC_BYTES("...") strings
+        CHECK(read_file(SOURCE_LOG).find("5 ENC()/ENC_BYTES() strings encoded")
+              != std::string::npos);
 
         CHECK(out.find("greeting[] = \"\\x11\\x28\\x2F\\x2F\\x32\" "
                        "/* Hello */;")
@@ -155,9 +175,21 @@ int main()
                        "/* [COLOR red=255 green=0 blue=128] */;")
                        != std::string::npos);
 
+        // ENC_BYTES gives a byte array (no NUL byte at the end)
+        CHECK(out.find("greeting_bytes[] = {'\\x11', '\\x28', '\\x2F', '\\x2F', '\\x32'} "
+                       "/* Hello */;")
+                       != std::string::npos);
+        CHECK(out.find("color_bytes[] = {'\\xFC', '\\xFF', '\\x00', '\\x80'} "
+                       "/* [COLOR red=255 green=0 blue=128] */;")
+                       != std::string::npos);
+
         // line numbers stay the same
         CHECK(std::count(out.begin(), out.end(), '\n') ==
               std::count(source.begin(), source.end(), '\n'));
+
+        // an empty ENC_BYTES("") can't be a C array
+        std::ofstream(EMPTY_SRC) << "const char empty[] = ENC_BYTES(\"\");";
+        CHECK(!run_source_command(MAIN_TBL, EMPTY_SRC));
     }
 
     std::cout << (n_tests - n_failed) << "/" << n_tests << " checks passed\n";

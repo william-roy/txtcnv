@@ -81,7 +81,8 @@ cat script.txt | txtcnv encode game.tbl - script.bin
 # Encode the piped in string and pipe it to stdout
 echo "Good morning, Crono!" | txtcnv encode game.tbl - | xxd
 
-# Replace instances of ENC("str") in source with encoded string literals
+# Replace instances of ENC("str") in source with encoded nul-terminated string 
+# literals and ENC_BYTES("str") with byte arrays
 txtcnv source game.tbl main.c ../build/main.c
 ```
 
@@ -90,14 +91,17 @@ txtcnv source game.tbl main.c ../build/main.c
 The `source` command encodes all string literals wrapped in `ENC(...)` within C/C++ code and adds a comment with the original text. For example:
 
 ```c
-// empty macro so file will still compile on its own
+// empty macros so file will still compile on its own
 #define ENC(s) s
+#define ENC_BYTES(s) s
 
 // before (src/text.c)
+const char name[] = ENC_BYTES("Crono");
 const char greeting[] = ENC("Good morning, Crono!");
 print(ENC("[COLOR red=255 green=0 blue=0]Hello"));
 
 // after (build/text.c)
+const char name[] = {'\x0C', '\x35', '\x32', '\x31', '\x32'} /* Crono */;
 const char greeting[] = "\x10\x32\x32\x27..." /* Good morning, Crono! */;
 print("\xFC\xFF\x00\x00\x11\x28\x2F\x2F\x32" /* [COLOR red=255 green=0 blue=0]Hello */);
 ```
@@ -110,7 +114,8 @@ build/%.c: src/%.c game.tbl
 
 Note: 
 
-- The output is still a plain string literal, so `sizeof` will give the encoded length + 1, because the compiler will still add the trailing NUL byte `\0`.
+- `ENC` outputs a plain string literal, so `sizeof` will give the encoded length + 1, because the compiler will still add the trailing NUL byte `\0`.
+- `ENC_BYTES` outputs a byte array with no NUL byte, so `sizeof` gives the encoded length. It only works as an array initializer (`const char x[] = ENC_BYTES("...")`), not as a function argument.
 - Strings next to each other are joined, e.g. `ENC("Good " "morning")`.
 - The only escapes allowed are `\\ \" \' \n \t`. Write raw bytes as `[$XX]`.
 - `ENC` in comments, inside other strings, or not followed by a string

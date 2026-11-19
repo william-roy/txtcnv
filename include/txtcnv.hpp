@@ -15,8 +15,6 @@
 //
 //     codec.Decode(text, data);    // hex-to-text (dumping)
 //     codec.Encode(data, text);    // text-to-hex (inserting)
-//
-//     codec.EncodeSource(out, src); // ENC("...") in source code -> "\x.."
 
 #pragma once
 
@@ -150,7 +148,6 @@ struct Stats {
                               // and a table further down the stack did
     std::vector<size_t> unmatched;  // offsets of the bytes no table matched
                                     // (written as raw hex, "[$XX]")
-    size_t literals = 0;      // ENC("...") strings replaced by EncodeSource
 };
 
 class TextCodec {
@@ -172,10 +169,6 @@ public:
 
     // Text-to-hex
     bool Encode(Bytes& data, const std::string& text);
-
-    // Encodes string literals wrapped in ENC("...") in C/C++ source code
-    // e.g. ENC("Hi") -> "\x11\x2C" /* Hi */
-    bool EncodeSource(std::string& out, const std::string& source);
 
     // Returns the last error
     const std::string& Error() const { return error_; }
