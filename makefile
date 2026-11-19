@@ -45,7 +45,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(wildcard include/*.hpp)
 	mkdir -p $(@D)
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-test: $(LIB_OBJ) $(TEST_DIR)/tests.cpp
+test: $(LIB_OBJ) $(TEST_DIR)/tests.cpp | $(EXE_PATH)
 	$(CXX) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $(TEST_DIR)/tests$(EXT)
 	./$(TEST_DIR)/tests$(EXT)
 
