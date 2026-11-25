@@ -21,8 +21,6 @@ what made sense to me. Some caveats apply:
   encoding fails instead of writing data that decodes differently.
 - **Labels** must be unique within a table, duplicate *text* in normal entries 
   is allowed (shortest hex wins).
-- **A -1 switch in the starting table** switches indefinitely, because there's
-  no table to fall back to, making it functionally the same as a 0 switch.
 
 The encoder never writes bytes that would decode to different text, so
 encode → decode always gives back the original text (sans line breaks).
@@ -105,7 +103,7 @@ const char name[] = {'\x0C', '\x35', '\x32', '\x31', '\x32'} /* Crono */;
 const char greeting[] = "\x10\x32\x32\x27..." /* Good morning, Crono! */;
 print("\xFC\xFF\x00\x00\x11\x28\x2F\x2F\x32" /* [COLOR red=255 green=0 blue=0]Hello */);
 ```
-Run it as a build step, for example in a makefile:
+Run it as a build step, e.g.:
 
 ```make
 build/%.c: src/%.c game.tbl
