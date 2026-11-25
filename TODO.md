@@ -2,12 +2,12 @@
 
 ## In Progress
 
+- [ ] Add table building to command line tool
 - [ ] Add python binding
 
 ## Planned
 
 - [ ] Add flag for disregarding strict checks (or levels of strictness)
-- [ ] Add functionality to analyze script and build optimal table automatically
 - [ ] Add support for newer directives not outlined in the 1.0 spec (e.g. `-import ascii.tbl`)
 
 ## Complete
