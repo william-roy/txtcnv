@@ -1,6 +1,7 @@
 // txtcnv command line tool
 
 #include "txtcnv.hpp"
+#include "source_encoder.hpp"
 
 #include <cctype>
 #include <cstddef>
@@ -9,9 +10,6 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <algorithm>
-#include <regex>
-#include <format>
 
 
 #ifdef _WIN32
@@ -75,188 +73,6 @@ static bool parse_size(const std::string& text, size_t& out)
     {
         return false;
     }
-}
-
-// Source files ----------------------------------------------------------------
-//
-// For encoding strings within C/C++ source code.
-//
-// ENC("...") is replaced with encoded nul-terminated string literal:
-// print(ENC("Hello"));  ->  print("\x11\x28\x2F\x2F\x32" /* Hello */);
-//
-// ENC_BYTES("...") is replaced with encoded byte array:
-// const char hi[] = ENC_BYTES("Hi");  ->  const char hi[] = {'\x11', '\x2C'} /* Hi */;
-
-static const std::regex SOURCE_PATTERN(
-    R"(//[^\n]*)"               // comment
-    R"(|/\*[\s\S]*?\*/)"        // block comment
-    R"(|"(?:[^"\\\n]|\\.)*")"   // string
-    R"(|'(?:[^'\\\n]|\\.)*')"   // character
-    R"(|\b(ENC_BYTES|ENC)\s*\(\s*((?:"(?:[^"\\\n]|\\.)*"\s*)+)\))" // macro
-    R"(|\b(ENC_BYTES|ENC)\s*\(\s*")"    // malformed macro
-);
-
-// one string literal
-// (pattern ends in )" so it needs R"re(...)re" instead of R"(...)")
-static const std::regex STRING_LITERAL(R"re("((?:[^"\\\n]|\\.)*)")re");
-
-struct SourceStats {
-    size_t literals = 0;      // ENC("...") and ENC_BYTES("...") strings replaced
-    size_t switches = 0;      // table switches written
-    size_t switch_bytes = 0;  // number of bytes those switches take up
-};
-
-// adds a string literal's contents to text, replacing the escapes
-static bool unescape(const std::string& str, std::string& text, std::string& error)
-{
-    for (size_t i = 0; i < str.size(); i++)
-    {
-        if (str[i] != '\\')
-        {
-            text += str[i];
-            continue;
-        }
-
-        char escaped = str[++i]; // the regex makes sure a character follows
-
-        switch (escaped)
-        {
-            case '\\': 
-            case '"': 
-            case '\'': 
-                text += escaped; 
-                break;
-            case 'n': 
-                text += '\n'; 
-                break;
-            case 't': 
-                text += '\t'; 
-                break;
-            default:
-                error = std::string("unsupported escape '\\") + escaped +
-                        "' (write raw bytes as [$XX])";
-                return false;
-        }
-    }
-    return true;
-}
-
-// returns bytes as a string literal, e.g. "\x11\x28"
-static std::string c_hex_literal(const TXTCNV::Bytes& bytes)
-{
-    std::string str = "\"";
-    for (uint8_t byte : bytes)
-    {
-        str += std::format("\\x{:02X}", byte);
-    }
-    return str + "\"";
-}
-
-// returns bytes as an array initializer, e.g. {'\x11', '\x28'}
-// (char literals, so values over 0x7F fit in a char array in C++)
-static std::string c_byte_array(const TXTCNV::Bytes& bytes)
-{
-    std::string str = "{";
-    for (size_t i = 0; i < bytes.size(); i++)
-    {
-        if (i > 0) str += ", ";
-        str += std::format("'\\x{:02X}'", bytes[i]);
-    }
-    return str + "}";
-}
-
-// returns text as a C comment, e.g. /* Hello */
-// (newlines are written as \n, and "*/" as "*\/" so it doesn't end the comment)
-static std::string c_comment(const std::string& text)
-{
-    std::string str = std::regex_replace(text, std::regex("\n"), "\\n");
-    str = std::regex_replace(str, std::regex(R"(\*/)"), R"(*\/)");
-    return "/* " + str + " */";
-}
-
-// replaces every ENC("...") and ENC_BYTES("...") in source with its encoding
-static bool encode_source(TXTCNV::TextCodec& codec, std::string& out,
-                          const std::string& source, SourceStats& stats,
-                          std::string& error)
-{
-    out.clear();
-    stats = {};
-    auto copied_up_to = source.cbegin();
-
-    std::sregex_iterator it(source.begin(), source.end(), SOURCE_PATTERN), end;
-    for (; it != end; ++it)
-    {
-        const std::smatch& match = *it;
-        bool is_macro = match[1].matched;
-        bool is_malformed = match[3].matched;
-
-        if (!is_macro && !is_malformed) continue;
-
-        size_t line = 1 + std::count(source.cbegin(), match[0].first, '\n');
-        auto line_error = [&](const std::string& message)
-        {
-            error = "line " + std::to_string(line) + ": " + message;
-            return false;
-        };
-
-        if (is_malformed)
-        {
-            return line_error("expected \"...\" strings and then ')' after " +
-                              match[3].str() + "(");
-        }
-
-        // join strings, e.g. ENC("Good " "morning")
-        std::string text;
-        const std::string strings = match[2].str();
-        std::sregex_iterator s(strings.begin(), strings.end(), STRING_LITERAL);
-
-        for (; s != end; ++s)
-        {
-            std::string escape_error;
-            if (!unescape((*s)[1].str(), text, escape_error))
-            {
-                return line_error(escape_error);
-            }
-        }
-
-        TXTCNV::Bytes data;
-        if (!codec.Encode(data, text)) return line_error(codec.Error());
-
-        // {} isn't a valid array initializer in C before C23
-        bool as_bytes = (match[1] == "ENC_BYTES");
-        if (as_bytes && data.empty())
-        {
-            return line_error("ENC_BYTES(\"\") would be an empty array");
-        }
-
-        stats.literals++;
-        stats.switches += codec.LastStats().switches;
-        stats.switch_bytes += codec.LastStats().switch_bytes;
-
-        out.append(copied_up_to, match[0].first);
-        out += (as_bytes ? c_byte_array(data) : c_hex_literal(data)) + " " +
-               c_comment(text);
-
-        // keep the line numbers the same as in the source
-        out.append(std::count(match[0].first, match[0].second, '\n'), '\n');
-        copied_up_to = match[0].second;
-    }
-
-    out.append(copied_up_to, source.cend());
-    return true;
-}
-
-// Command line ----------------------------------------------------------------
-
-// verbose summary of the source command
-static void print_source_stats(const SourceStats& stats, size_t in_size,
-                               size_t out_size)
-{
-    std::cerr << stats.literals << " ENC()/ENC_BYTES() strings encoded ("
-              << in_size << " bytes of source -> "
-              << out_size << " bytes)\n";
-    std::cerr << "Table switches written: " << stats.switches
-              << " (" << stats.switch_bytes << " bytes)\n";
 }
 
 // verbose summary of an encode or decode
@@ -344,11 +160,11 @@ int main(int argc, char* argv[])
 
     const std::string command = args.empty() ? "" : args[0];
 
-    bool known_command = command == "encode" || 
-                         command == "decode" ||
-                         command == "source";
+    bool valid_cmd = command == "encode" || 
+                     command == "decode" ||
+                     command == "source";
 
-    if (!known_command || args.size() < 3 || args.size() > 4)
+    if (!valid_cmd || args.size() < 3 || args.size() > 4)
     {
         std::cerr <<
         "usage:\n"
@@ -405,7 +221,6 @@ int main(int argc, char* argv[])
     }
 
     std::string output; // the converted output (text or binary)
-    SourceStats source_stats;
 
     if (command == "encode")
     {
@@ -417,16 +232,7 @@ int main(int argc, char* argv[])
         }
         output.assign(data.begin(), data.end());
     }
-    else if (command == "source")
-    {
-        std::string error;
-        if (!encode_source(codec, output, input, source_stats, error))
-        {
-            std::cerr << "ERROR: " << input_path << ": " << error << "\n";
-            return 1;
-        }
-    }
-    else // decode
+    else if (command == "decode")
     {
         if (decode_skip > input.size())
         {
@@ -444,6 +250,18 @@ int main(int argc, char* argv[])
             return 1;
         }
     }
+    else if (command == "source")
+    {
+        TXTCNV::SourceEncoder src_encoder;
+        std::string error;
+        if (!src_encoder.encode(codec, output, input, error, verbose))
+        {
+            std::cerr << "ERROR: " << input_path << ": " << error << "\n";
+            return 1;
+        }
+
+        src_encoder.print_stats();
+    }
 
     if (!write_output(output_path, output.data(), output.size()))
     {
@@ -452,11 +270,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (verbose && command == "source")
-    {
-        print_source_stats(source_stats, input.size(), output.size());
-    }
-    else if (verbose)
+    if (command != "source")
     {
         print_stats(codec.LastStats(), command, input.size(), output.size(), decode_skip);
     }
