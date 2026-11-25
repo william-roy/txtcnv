@@ -225,7 +225,7 @@ int main(int argc, char* argv[])
     if (command == "encode")
     {
         TXTCNV::Bytes data;
-        if (!codec.Encode(data, input))
+        if (!codec.Encode(data, input, verbose))
         {
             std::cerr << "ERROR: " << codec.Error() << "\n";
             return 1;
@@ -244,7 +244,7 @@ int main(int argc, char* argv[])
         // keep only the chunk picked with -s and -l
         input = input.substr(decode_skip, decode_len);
 
-        if (!codec.Decode(output, TXTCNV::Bytes(input.begin(), input.end())))
+        if (!codec.Decode(output, TXTCNV::Bytes(input.begin(), input.end()), verbose))
         {
             std::cerr << "ERROR: " << codec.Error() << "\n";
             return 1;

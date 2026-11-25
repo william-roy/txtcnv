@@ -6,6 +6,7 @@
 #include <charconv>
 #include <format>
 #include <fstream>
+#include <iostream>
 #include <queue>
 #include <sstream>
 #include <string_view>
@@ -991,6 +992,35 @@ private:
         write_raw(step, from, items_[from.pos].byte);
     }
 
+    // the script text a step wrote, e.g. "He", [COLOR red=255] or a table switch
+    std::string step_text(const Step& step) const
+    {
+        if (step.is_switch)
+        {
+            return "switch to table " + tables_[step.state.stack.top()].id();
+        }
+
+        size_t from = steps_[step.prev].state.pos;
+        std::string text;
+
+        for (size_t i = from; i < step.state.pos; i++)
+        {
+            const Item& item = items_[i];
+
+            if (item.type == ItemType::Char) text += item.text;
+            if (item.type == ItemType::Raw) text += raw_byte_str(item.byte);
+            if (item.type == ItemType::Code)
+            {
+                text += "[" + item.label;
+                for (const std::string& arg : item.args) text += " " + arg;
+                text += "]";
+            }
+        }
+
+        // quote normal text, so spaces at either end can be seen
+        return (items_[from].type == ItemType::Char) ? "\"" + text + "\"" : text;
+    }
+
     // all the moves from a step
     void expand(int step)
     {
@@ -1009,7 +1039,7 @@ public:
         : tables_(tables), items_(items) {}
 
     // finds the shortest encoding, or returns false
-    bool run(Bytes& out, Stats& stats)
+    bool run(Bytes& out, Stats& stats, bool verbose = false)
     {
         add_step(DecoderState{}, NO_STEP, {});
 
@@ -1032,6 +1062,14 @@ public:
                 for (auto it = path.rbegin(); it != path.rend(); it++)
                 {
                     const Step& step = steps_[*it];
+
+                    // the text this step wrote, and the bytes it became
+                    if (verbose && !step.bytes.empty())
+                    {
+                        std::cerr << std::format("0x{:X}: {} -> {}\n", out.size(),
+                                                 step_text(step), hex_str(step.bytes));
+                    }
+
                     out.insert(out.end(), step.bytes.begin(), step.bytes.end());
 
                     if (step.is_switch)
@@ -1198,7 +1236,7 @@ bool TextCodec::LoadTable(const std::string& content)
     return true;
 }
 
-bool TextCodec::Encode(Bytes& data, const std::string& text)
+bool TextCodec::Encode(Bytes& data, const std::string& text, bool verbose)
 {    
     if (tables_.empty()) return fail("no table loaded");
 
@@ -1213,7 +1251,7 @@ bool TextCodec::Encode(Bytes& data, const std::string& text)
     if (!lex_script(str, items, error)) return fail(error);
 
     Encoder encoder(tables_, items);
-    if (!encoder.run(data, stats_)) return fail(encoder.failure());
+    if (!encoder.run(data, stats_, verbose)) return fail(encoder.failure());
 
     return true;
 }
@@ -1223,7 +1261,7 @@ bool TextCodec::Encode(Bytes& data, const std::string& text)
 // Decoding is much simpler than encoding and is all done in this function, 
 // performed with a greedy matching algorithm.
 
-bool TextCodec::Decode(std::string& text, const Bytes& data)
+bool TextCodec::Decode(std::string& text, const Bytes& data, bool verbose)
 {
     if (tables_.empty()) return fail("no table loaded");
     text.clear();
@@ -1231,9 +1269,20 @@ bool TextCodec::Decode(std::string& text, const Bytes& data)
 
     TableStack stack;
     size_t pos = 0;
+    size_t start = 0; // where the current entry's bytes begin
+
+    // the bytes read since start, and the text they became
+    auto verbose_print = [&](const std::string& result)
+    {
+        if (!verbose) return;
+        Bytes read(data.begin() + start, data.begin() + pos);
+        std::cerr << std::format("0x{:X}: {} -> {}\n", start, hex_str(read), result);
+    };
 
     while (pos < data.size())
     {
+        start = pos;
+
         // the longest match in the active table, fall back while there is none
         const Entry* entry = nullptr;
         size_t fallbacks = 0;
@@ -1254,6 +1303,7 @@ bool TextCodec::Decode(std::string& text, const Bytes& data)
             stats_.unmatched.push_back(pos);
             stack.reset();
             pos++;
+            verbose_print(raw_byte_str(data[start]) + " (no match)");
             continue;
         }
 
@@ -1266,6 +1316,7 @@ bool TextCodec::Decode(std::string& text, const Bytes& data)
         {
             text += entry->text;
             stack.count_match();
+            verbose_print("\"" + entry->text + "\"");
             continue;
         }
 
@@ -1274,6 +1325,7 @@ bool TextCodec::Decode(std::string& text, const Bytes& data)
             stack.follow(*entry);
             stats_.switches++;
             stats_.switch_bytes += entry->hex.size();
+            verbose_print("switch to table " + entry->label);
             if (!mark_table_switches) continue;
         }
         else
@@ -1282,12 +1334,15 @@ bool TextCodec::Decode(std::string& text, const Bytes& data)
         }
 
         // [label], with the parameters if it's a control code
-        text += "[" + entry->label;
+        std::string code = "[" + entry->label;
         for (size_t i = 0; i < entry->params.size(); i++)
         {
-            text += " " + entry->params[i].format_value(params[i]);
+            code += " " + entry->params[i].format_value(params[i]);
         }
-        text += "]";
+        code += "]";
+        text += code;
+
+        if (entry->type != EntryType::Switch) verbose_print(code);
 
         // write any line breaks after the label
         text.append(entry->linebreaks, '\n');

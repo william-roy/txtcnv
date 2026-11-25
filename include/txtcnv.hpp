@@ -165,10 +165,10 @@ public:
     bool LoadTable(const std::string& content);
 
     // Hex-to-text
-    bool Decode(std::string& text, const Bytes& data);
+    bool Decode(std::string& text, const Bytes& data, bool verbose = false);
 
     // Text-to-hex
-    bool Encode(Bytes& data, const std::string& text);
+    bool Encode(Bytes& data, const std::string& text, bool verbose = false);
 
     // Returns the last error
     const std::string& Error() const { return error_; }
